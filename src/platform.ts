@@ -38,7 +38,8 @@ export class CosaPlatform implements StaticPlatformPlugin {
   async accessories(
     register: (foundAccessories: AccessoryPlugin[]) => void
   ): Promise<void> {
-    this.log.debug(JSON.stringify(this.config))
+    // this.log.debug(JSON.stringify(this.config))
+    this.log.debug(`Cosa platform loaded for user: ${this.config.email}`)
 
     const { email, password } = this.config
 

@@ -5,7 +5,8 @@ import {
   getCurrentTemperature,
   getTargetTemperature,
   setTargetHeatingState,
-  setTargetTemperature
+  setTargetTemperature,
+  getCurrentHumidity
 } from '../api/home.js'
 
 export class Thermostat {
@@ -13,6 +14,7 @@ export class Thermostat {
   private readonly name: string
 
   private readonly thermostatService: Service
+  private readonly humidityService: Service
   private readonly informationService: Service
   private readonly hap: HAP
 
@@ -60,6 +62,9 @@ export class Thermostat {
 
     this.thermostatService
       .getCharacteristic(hap.Characteristic.CurrentTemperature)
+      .setProps({
+        minStep: 0.1
+      })
       .onGet(this.handleCurrentTemperatureGet.bind(this))
 
     this.thermostatService
@@ -79,6 +84,15 @@ export class Thermostat {
       // @ts-expect-error - TODO
       .onSet(this.handleTemperatureDisplayUnitsSet.bind(this))
 
+    this.humidityService = new hap.Service.HumiditySensor(this.name)
+
+    this.humidityService
+      .getCharacteristic(hap.Characteristic.CurrentRelativeHumidity)
+      .setProps({
+        minStep: 1 // Nem genelde tam sayı olur
+      })
+      .onGet(this.handleCurrentRelativeHumidityGet.bind(this))
+
     this.informationService = new hap.Service.AccessoryInformation()
       .setCharacteristic(hap.Characteristic.Manufacturer, 'Cosa')
       .setCharacteristic(hap.Characteristic.Model, 'v4')
@@ -91,7 +105,11 @@ export class Thermostat {
   }
 
   getServices(): Service[] {
-    return [this.informationService, this.thermostatService]
+    return [
+      this.informationService,
+      this.thermostatService,
+      this.humidityService
+    ]
   }
 
   /**
@@ -212,5 +230,16 @@ export class Thermostat {
    */
   handleTemperatureDisplayUnitsSet(value: number): void {
     this.log.debug('Triggered SET TemperatureDisplayUnits:', value)
+  }
+
+  async handleCurrentRelativeHumidityGet(): Promise<number> {
+    this.log.debug('Triggered GET CurrentRelativeHumidity')
+
+    const currentValue = await getCurrentHumidity({
+      homeId: this.id
+    })
+    this.log.debug('Humidity is', currentValue)
+
+    return currentValue
   }
 }

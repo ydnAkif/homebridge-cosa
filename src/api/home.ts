@@ -4,7 +4,8 @@ import { z } from 'zod'
 const HomeSchema = z.object({
   combiState: z.enum(['on', 'off']),
   temperature: z.number(),
-  targetTemperature: z.number()
+  targetTemperature: z.number(),
+  humidity: z.number().optional()
 })
 
 const HomeResponseSchema = z.object({
@@ -153,4 +154,21 @@ export async function setTargetHeatingState({
     // eslint-disable-next-line no-console
     console.error(error)
   }
+}
+
+export async function getCurrentHumidity({
+  homeId
+}: {
+  homeId: string
+}): Promise<number> {
+  const house = await getHome({
+    homeId
+  })
+
+  // Eğer nem verisi gelirse onu döndür, gelmezse 0 döndür.
+  if (house?.humidity !== undefined) {
+    return house.humidity
+  }
+
+  return 0
 }
