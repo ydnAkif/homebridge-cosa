@@ -9,6 +9,7 @@ import {
 import { Thermostat } from './accessories/index.js'
 import { login } from './api/auth.js'
 import { getHomeList } from './api/home.js'
+import { setApiLogger } from './api/index.js'
 
 interface CosaPlatformConfigType extends PlatformConfig {
   email: string
@@ -25,6 +26,23 @@ export class CosaPlatform implements StaticPlatformPlugin {
     this.config = config
     this.api = api
 
+    setApiLogger((level, message) => {
+      switch (level) {
+        case 'debug':
+          this.log.debug(message)
+          break
+        case 'info':
+          this.log.info(message)
+          break
+        case 'warn':
+          this.log.warn(message)
+          break
+        case 'error':
+          this.log.error(message)
+          break
+      }
+    })
+
     // probably parse config or something here
     log.info('Cosa platform finished initializing!')
   }
@@ -38,7 +56,7 @@ export class CosaPlatform implements StaticPlatformPlugin {
   async accessories(
     register: (foundAccessories: AccessoryPlugin[]) => void
   ): Promise<void> {
-    this.log.debug(JSON.stringify(this.config))
+    this.log.debug(`Cosa platform loaded for user: ${this.config.email}`)
 
     const { email, password } = this.config
 

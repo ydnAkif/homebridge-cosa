@@ -1,4 +1,4 @@
-import { api } from './index.js'
+import { api, logApiError, logApiWarn } from './index.js'
 import { z } from 'zod'
 
 const LoginResponseSchema = z.object({
@@ -26,10 +26,11 @@ export async function login({
       return true
     }
 
+    logApiWarn('Login response did not match expected schema.')
+
     return false
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(error)
+    logApiError('Login request failed', error)
 
     return false
   }
