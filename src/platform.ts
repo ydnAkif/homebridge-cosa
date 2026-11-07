@@ -13,6 +13,7 @@ import { getHomeList } from './api/home.js'
 interface CosaPlatformConfigType extends PlatformConfig {
   email: string
   password: string
+  accessoryNames?: Record<string, string>
 }
 
 export class CosaPlatform implements StaticPlatformPlugin {
@@ -69,12 +70,25 @@ export class CosaPlatform implements StaticPlatformPlugin {
     const devices = homeList.map((home) => {
       this.log.info(`Created device with name "${home.name}".`)
 
-      return new Thermostat({
+      const accessory = new Thermostat({
         hap: this.api.hap,
         log: this.log,
         id: home.id,
         name: home.name
       })
+      const alias = this.config.accessoryNames?.[home.id] ?? this.config.accessoryNames?.[home.name]
+      if (typeof alias === 'string' && alias.trim()) {
+        // Preserve the original static-platform UUID when the display name changes.
+        Object.assign(accessory, { uuid_base: home.name, name: alias.trim() })
+        for (const service of accessory.getServices()) {
+          service.setCharacteristic(this.api.hap.Characteristic.Name, alias.trim())
+          if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
+            service.addOptionalCharacteristic(this.api.hap.Characteristic.ConfiguredName)
+            service.setCharacteristic(this.api.hap.Characteristic.ConfiguredName, alias.trim())
+          }
+        }
+      }
+      return accessory
     })
 
     register(devices)
