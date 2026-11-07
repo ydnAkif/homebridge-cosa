@@ -7,6 +7,7 @@ import {
 } from 'homebridge'
 
 import { Thermostat } from './accessories/index.js'
+import { setApiLogger } from './api/index.js'
 import { login } from './api/auth.js'
 import { getHomeList } from './api/home.js'
 import { loadHomesWithRetry } from './startup.js'
@@ -42,6 +43,9 @@ export class CosaPlatform implements StaticPlatformPlugin {
     this.log = log
     this.config = config
     this.api = api
+    setApiLogger((level, message) => {
+      log[level](message)
+    })
 
     // probably parse config or something here
     log.info('Cosa platform finished initializing!')
@@ -57,10 +61,11 @@ export class CosaPlatform implements StaticPlatformPlugin {
     register: (foundAccessories: AccessoryPlugin[]) => void
   ): Promise<void> {
     // this.log.debug(JSON.stringify(this.config))
-    this.log.debug(`Cosa platform loaded for user: ${this.config.email}`)
+    this.log.debug('Cosa platform loaded')
 
     const { email, password } = this.config
 
+    let retryDelay = 30000
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
     let releaseWait: (() => void) | undefined
@@ -75,13 +80,16 @@ export class CosaPlatform implements StaticPlatformPlugin {
       stopped: () => stopped,
       retry: () => {
         this.log.warn(
-          'Cosa is temporarily unavailable. Retrying in 30 seconds; preserving existing HomeKit accessories.'
+          `Cosa unavailable; retrying in ${
+            retryDelay / 1000
+          } seconds, preserving accessories.`
         )
       },
       wait: async () => {
         await new Promise<void>((resolve) => {
           releaseWait = resolve
-          timer = setTimeout(resolve, 30000)
+          timer = setTimeout(resolve, retryDelay)
+          retryDelay = Math.min(retryDelay * 2, 900000)
         })
       }
     })

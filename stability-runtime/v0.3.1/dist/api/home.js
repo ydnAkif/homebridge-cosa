@@ -1,10 +1,14 @@
-import { requireHumidity } from '../humidity.js';
 import { api, logApiError, logApiWarn } from './index.js';
+import { requireHumidity } from '../humidity.js';
 import { z } from 'zod';
 const HomeSchema = z.object({
     combiState: z.enum(['on', 'off']),
-    temperature: z.number(),
-    targetTemperature: z.number(),
+    temperature: z.number().finite(),
+    targetTemperature: z.number().finite(),
+    homeTemperature: z.number().finite().optional(),
+    awayTemperature: z.number().finite().optional(),
+    sleepTemperature: z.number().finite().optional(),
+    customTemperature: z.number().finite().optional(),
     humidity: z.number().optional()
 });
 const HomeResponseSchema = z.object({
@@ -14,9 +18,9 @@ const HomeListSchema = z.array(z.object({
     id: z.string(),
     name: z.string()
 }));
-const HOME_CACHE_TTL_MS = 30000;
+const HOME_CACHE_TTL_MS = 30_000;
 const READ_RETRY_COUNT = 2;
-const READ_RETRY_DELAY_MS = 1000;
+const READ_RETRY_DELAY_MS = 1_000;
 const WRITE_RETRY_COUNT = 2;
 const WRITE_RETRY_DELAY_MS = 800;
 const homeCache = new Map();
@@ -52,7 +56,7 @@ async function runWriteWithRetry({ operation, context }) {
                 continue;
             }
             logApiError(`${context} failed on attempt ${attempt}/${WRITE_RETRY_COUNT}`, error);
-            return;
+            throw new Error('Cosa write failed');
         }
     }
 }
@@ -131,13 +135,15 @@ export async function getCurrentTemperature({ homeId }) {
     if (house !== null) {
         return house.temperature;
     }
-    return 5;
+    throw new Error('Cosa measurement unavailable');
 }
 export async function getCurrentHeatingState({ homeId }) {
     const house = await getHome({
         homeId
     });
-    return house?.combiState === 'on';
+    if (house === null)
+        throw new Error('Cosa state unavailable');
+    return house.combiState === 'on';
 }
 export async function getTargetTemperature({ homeId }) {
     const house = await getHome({
@@ -146,18 +152,19 @@ export async function getTargetTemperature({ homeId }) {
     if (house !== null) {
         return house.targetTemperature;
     }
-    return 5;
+    throw new Error('Cosa measurement unavailable');
 }
 export async function setTargetTemperature({ homeId, targetTemperature }) {
-    const cachedHome = homeCache.get(homeId);
-    if (cachedHome !== undefined) {
-        homeCache.set(homeId, {
-            value: {
-                ...cachedHome.value,
-                targetTemperature
-            },
-            fetchedAt: Date.now()
-        });
+    // Read the device's other presets instead of resetting them to 5 degrees.
+    const home = await getHome({ homeId, forceRefresh: true });
+    if (home === null ||
+        [
+            home.homeTemperature,
+            home.awayTemperature,
+            home.sleepTemperature,
+            home.customTemperature
+        ].some((value) => value === undefined)) {
+        throw new Error('Cosa target presets unavailable; refusing to overwrite them');
     }
     await runWriteWithRetry({
         context: `setTargetTemperatures request for homeId=${homeId}, targetTemperature=${targetTemperature}`,
@@ -165,26 +172,17 @@ export async function setTargetTemperature({ homeId, targetTemperature }) {
             await api.post(`/endpoints/setTargetTemperatures`, {
                 endpoint: homeId,
                 targetTemperatures: {
-                    home: targetTemperature,
-                    away: 5,
-                    sleep: 5,
-                    custom: 5
+                    away: home.awayTemperature,
+                    sleep: home.sleepTemperature,
+                    custom: home.customTemperature,
+                    home: targetTemperature
                 }
             });
         }
     });
+    homeCache.delete(homeId);
 }
 export async function setTargetHeatingState({ homeId, targetState }) {
-    const cachedHome = homeCache.get(homeId);
-    if (cachedHome !== undefined) {
-        homeCache.set(homeId, {
-            value: {
-                ...cachedHome.value,
-                combiState: targetState === 'off' ? 'off' : 'on'
-            },
-            fetchedAt: Date.now()
-        });
-    }
     await runWriteWithRetry({
         context: `setMode request for homeId=${homeId}, targetState=${targetState}`,
         operation: async () => {
@@ -195,11 +193,9 @@ export async function setTargetHeatingState({ homeId, targetState }) {
             });
         }
     });
+    homeCache.delete(homeId);
 }
 export async function getCurrentHumidity({ homeId }) {
-    const house = await getHome({
-        homeId
-    });
-    return requireHumidity(house?.humidity);
+    return requireHumidity((await getHome({ homeId }))?.humidity);
 }
 //# sourceMappingURL=home.js.map

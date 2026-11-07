@@ -1,7 +1,7 @@
 {
   "name": "homebridge-cosa",
   "displayName": "Cosa",
-  "version": "0.3.1-ydnakif.3",
+  "version": "0.3.1-ydnakif.4",
   "description": "Homebridge plugin for Cosa Smart Thermostat",
   "keywords": [
     "homebridge-plugin"
@@ -19,14 +19,14 @@
   ],
   "scripts": {
     "prebuild": "npm run lint",
-    "build": "rimraf ./dist && tsc",
+    "build": "rimraf ./dist && tsc && node scripts/sync-runtime.mjs",
     "dev": "npm run build && npm link && nodemon",
     "format": "prettier --ignore-path .gitignore --write --list-different .",
     "lint": "npm run lint:eslint && npm run lint:typescript && npm run lint:prettier",
     "lint:eslint": "eslint --ignore-path .gitignore --ext .js,.ts .",
     "lint:prettier": "prettier --ignore-path .gitignore --check .",
     "lint:typescript": "tsc --noEmit",
-    "prepare": "is-ci || husky install",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build",
     "test": "tsc && node --test test/*.test.mjs"
   },

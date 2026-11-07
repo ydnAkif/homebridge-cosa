@@ -1,8 +1,8 @@
-import { loadHomesWithRetry } from './startup.js';
 import { Thermostat } from './accessories/index.js';
+import { setApiLogger } from './api/index.js';
 import { login } from './api/auth.js';
 import { getHomeList } from './api/home.js';
-import { setApiLogger } from './api/index.js';
+import { loadHomesWithRetry } from './startup.js';
 function isCosaConfig(config) {
     return (typeof config['email'] === 'string' &&
         config['email'].trim().length > 0 &&
@@ -21,20 +21,7 @@ export class CosaPlatform {
         this.config = config;
         this.api = api;
         setApiLogger((level, message) => {
-            switch (level) {
-                case 'debug':
-                    this.log.debug(message);
-                    break;
-                case 'info':
-                    this.log.info(message);
-                    break;
-                case 'warn':
-                    this.log.warn(message);
-                    break;
-                case 'error':
-                    this.log.error(message);
-                    break;
-            }
+            log[level](message);
         });
         // probably parse config or something here
         log.info('Cosa platform finished initializing!');
@@ -47,8 +34,9 @@ export class CosaPlatform {
      */
     async accessories(register) {
         // this.log.debug(JSON.stringify(this.config))
-        this.log.debug(`Cosa platform loaded for user: ${this.config.email}`);
+        this.log.debug('Cosa platform loaded');
         const { email, password } = this.config;
+        let retryDelay = 30000;
         let stopped = false;
         let timer;
         let releaseWait;
@@ -63,12 +51,13 @@ export class CosaPlatform {
             getHomes: getHomeList,
             stopped: () => stopped,
             retry: () => {
-                this.log.warn('Cosa is temporarily unavailable. Retrying in 30 seconds; preserving existing HomeKit accessories.');
+                this.log.warn(`Cosa unavailable; retrying in ${retryDelay / 1000} seconds, preserving accessories.`);
             },
             wait: async () => {
                 await new Promise((resolve) => {
                     releaseWait = resolve;
-                    timer = setTimeout(resolve, 30000);
+                    timer = setTimeout(resolve, retryDelay);
+                    retryDelay = Math.min(retryDelay * 2, 900000);
                 });
             }
         });

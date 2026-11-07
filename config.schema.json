@@ -16,6 +16,14 @@
         "type": "string",
         "required": true,
         "description": "The password to log in to Cosa."
+      },
+      "accessoryNames": {
+        "title": "Accessory names",
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Stable device ID (or original Cosa home name) mapped to a display name. Does not change device identity."
       }
     }
   },

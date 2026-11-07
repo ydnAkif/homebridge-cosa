@@ -1,4 +1,4 @@
-import { api } from './index.js'
+import { api, logApiError, logApiWarn, setSessionRefresh } from './index.js'
 import { z } from 'zod'
 
 const LoginResponseSchema = z.object({
@@ -12,6 +12,7 @@ export async function login({
   email: string
   password: string
 }): Promise<boolean> {
+  setSessionRefresh(async () => await login({ email, password }))
   try {
     const response = await api.post('/users/login', {
       email,
@@ -26,10 +27,11 @@ export async function login({
       return true
     }
 
+    logApiWarn('Login response did not match expected schema.')
+
     return false
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(error)
+    logApiError('Login request failed', error)
 
     return false
   }
