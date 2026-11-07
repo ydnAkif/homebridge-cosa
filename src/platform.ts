@@ -9,6 +9,7 @@ import {
 import { Thermostat } from './accessories/index.js'
 import { login } from './api/auth.js'
 import { getHomeList } from './api/home.js'
+import { loadHomesWithRetry } from './startup.js'
 
 interface CosaPlatformConfigType extends PlatformConfig {
   email: string
@@ -16,12 +17,28 @@ interface CosaPlatformConfigType extends PlatformConfig {
   accessoryNames?: Record<string, string>
 }
 
+function isCosaConfig(
+  config: PlatformConfig
+): config is CosaPlatformConfigType {
+  return (
+    typeof config['email'] === 'string' &&
+    config['email'].trim().length > 0 &&
+    typeof config['password'] === 'string' &&
+    config['password'].length > 0
+  )
+}
+
 export class CosaPlatform implements StaticPlatformPlugin {
   private readonly log: Logging
   private readonly config: CosaPlatformConfigType
   private readonly api: API
 
-  constructor(log: Logging, config: CosaPlatformConfigType, api: API) {
+  constructor(log: Logging, config: PlatformConfig, api: API) {
+    if (!isCosaConfig(config)) {
+      throw new Error(
+        'Cosa requires a non-empty email and password in its platform configuration.'
+      )
+    }
     this.log = log
     this.config = config
     this.api = api
@@ -44,28 +61,31 @@ export class CosaPlatform implements StaticPlatformPlugin {
 
     const { email, password } = this.config
 
-    const loggedIn = await login({
-      email,
-      password
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let releaseWait: (() => void) | undefined
+    this.api.on('shutdown', () => {
+      stopped = true
+      if (timer !== undefined) clearTimeout(timer)
+      releaseWait?.()
     })
-
-    if (!loggedIn) {
-      this.log.error('Unable to login. Check your email and password.')
-
-      register([])
-      return
-    }
-
-    const homeList = await getHomeList()
-
-    if (homeList.length === 0) {
-      this.log.error(
-        'A home in Cosa is not available to register the thermostat.'
-      )
-
-      register([])
-      return
-    }
+    const homeList = await loadHomesWithRetry({
+      login: async () => await login({ email, password }),
+      getHomes: getHomeList,
+      stopped: () => stopped,
+      retry: () => {
+        this.log.warn(
+          'Cosa is temporarily unavailable. Retrying in 30 seconds; preserving existing HomeKit accessories.'
+        )
+      },
+      wait: async () => {
+        await new Promise<void>((resolve) => {
+          releaseWait = resolve
+          timer = setTimeout(resolve, 30000)
+        })
+      }
+    })
+    if (homeList === undefined) return
 
     const devices = homeList.map((home) => {
       this.log.info(`Created device with name "${home.name}".`)
@@ -76,15 +96,25 @@ export class CosaPlatform implements StaticPlatformPlugin {
         id: home.id,
         name: home.name
       })
-      const alias = this.config.accessoryNames?.[home.id] ?? this.config.accessoryNames?.[home.name]
-      if (typeof alias === 'string' && alias.trim()) {
+      const alias =
+        this.config.accessoryNames?.[home.id] ??
+        this.config.accessoryNames?.[home.name]
+      if (typeof alias === 'string' && alias.trim().length > 0) {
         // Preserve the original static-platform UUID when the display name changes.
         Object.assign(accessory, { uuid_base: home.name, name: alias.trim() })
         for (const service of accessory.getServices()) {
-          service.setCharacteristic(this.api.hap.Characteristic.Name, alias.trim())
+          service.setCharacteristic(
+            this.api.hap.Characteristic.Name,
+            alias.trim()
+          )
           if (!(service instanceof this.api.hap.Service.AccessoryInformation)) {
-            service.addOptionalCharacteristic(this.api.hap.Characteristic.ConfiguredName)
-            service.setCharacteristic(this.api.hap.Characteristic.ConfiguredName, alias.trim())
+            service.addOptionalCharacteristic(
+              this.api.hap.Characteristic.ConfiguredName
+            )
+            service.setCharacteristic(
+              this.api.hap.Characteristic.ConfiguredName,
+              alias.trim()
+            )
           }
         }
       }

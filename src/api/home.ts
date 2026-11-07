@@ -1,4 +1,5 @@
 import { api } from './index.js'
+import { requireHumidity } from '../humidity.js'
 import { z } from 'zod'
 
 const HomeSchema = z.object({
@@ -165,10 +166,5 @@ export async function getCurrentHumidity({
     homeId
   })
 
-  // Eğer nem verisi gelirse onu döndür, gelmezse 0 döndür.
-  if (house?.humidity !== undefined) {
-    return house.humidity
-  }
-
-  return 0
+  return requireHumidity(house?.humidity)
 }

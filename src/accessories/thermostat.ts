@@ -235,11 +235,14 @@ export class Thermostat {
   async handleCurrentRelativeHumidityGet(): Promise<number> {
     this.log.debug('Triggered GET CurrentRelativeHumidity')
 
-    const currentValue = await getCurrentHumidity({
-      homeId: this.id
-    })
-    this.log.debug('Humidity is', currentValue)
-
-    return currentValue
+    try {
+      const currentValue = await getCurrentHumidity({ homeId: this.id })
+      this.log.debug('Humidity is', currentValue)
+      return currentValue
+    } catch {
+      throw new this.hap.HapStatusError(
+        this.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE
+      )
+    }
   }
 }
