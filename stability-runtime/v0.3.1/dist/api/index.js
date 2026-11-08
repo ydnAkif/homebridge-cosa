@@ -37,6 +37,17 @@ export const api = axios.create({
         Accept: 'application/json'
     }
 });
+export class CosaApiError extends Error {
+    constructor(code) {
+        const safeCode = typeof code === 'number' && Number.isFinite(code)
+            ? String(code)
+            : typeof code === 'string' && /^-?\d{1,8}$/.test(code)
+                ? code
+                : 'unknown';
+        super(`Cosa API rejected the request (code ${safeCode})`);
+        this.name = 'CosaApiError';
+    }
+}
 // Cosa reports an expired token as HTTP 200 with code 104.
 // Normalize it before the shared auth retry interceptor, without logging its body.
 api.interceptors.response.use((response) => {
@@ -52,7 +63,7 @@ api.interceptors.response.use((response) => {
         data !== null &&
         'ok' in data &&
         (data.ok === false || data.ok === 0)) {
-        throw new Error('Cosa API rejected the request');
+        throw new CosaApiError('code' in data ? data.code : undefined);
     }
     return response;
 });

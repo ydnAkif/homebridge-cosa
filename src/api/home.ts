@@ -1,4 +1,4 @@
-import { api, logApiError, logApiWarn } from './index.js'
+import { api, CosaApiError, logApiError, logApiWarn } from './index.js'
 import { requireHumidity } from '../humidity.js'
 import { z } from 'zod'
 
@@ -27,6 +27,13 @@ const HomeListSchema = z.array(
 
 type HomeType = z.infer<typeof HomeSchema>
 type HomeListType = z.infer<typeof HomeListSchema>
+
+class EndpointResponseError extends Error {
+  constructor(fields: string[]) {
+    super(`Invalid Cosa endpoint fields: ${fields.join(', ')}`)
+    this.name = 'EndpointResponseError'
+  }
+}
 
 const HOME_CACHE_TTL_MS = 30_000
 const READ_RETRY_COUNT = 2
@@ -162,17 +169,27 @@ export async function getHome({
           return parsedResponse.data.endpoint
         }
 
-        logApiWarn(
-          `getEndpoint response did not match expected schema for homeId=${homeId}.`
+        throw new EndpointResponseError(
+          parsedResponse.error.issues.map((issue) => issue.path.join('.'))
         )
-        return null
       } catch (error) {
         const isLastAttempt = attempt === READ_RETRY_COUNT
 
-        if (!isLastAttempt && isRetryableNetworkError(error)) {
-          logApiWarn(
-            `getEndpoint request for homeId=${homeId} failed on attempt ${attempt}/${READ_RETRY_COUNT}, retrying.`
-          )
+        // This is a read-only operation: retry a rejected or incomplete response
+        // once before treating the cloud read as unavailable. Writes keep their
+        // stricter retry policy and are never replayed for application errors.
+        if (
+          !isLastAttempt &&
+          (isRetryableNetworkError(error) ||
+            error instanceof CosaApiError ||
+            error instanceof EndpointResponseError)
+        ) {
+          const reason =
+            error instanceof CosaApiError ||
+            error instanceof EndpointResponseError
+              ? error.message
+              : 'temporary network error'
+          logApiWarn(`getEndpoint: ${reason}; retrying once.`)
           await wait(READ_RETRY_DELAY_MS)
           continue
         }
