@@ -3,6 +3,7 @@ import { requireHumidity } from '../humidity.js';
 import { z } from 'zod';
 const HomeSchema = z.object({
     combiState: z.enum(['on', 'off']),
+    option: z.string().optional(),
     temperature: z.number().finite(),
     targetTemperature: z.number().finite(),
     homeTemperature: z.number().finite().optional(),

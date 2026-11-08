@@ -7,7 +7,6 @@ import {
 
 import {
   getHome,
-  getCurrentHumidity,
   setTargetHeatingState,
   setTargetTemperature
 } from '../api/home.js'
@@ -27,6 +26,9 @@ export class Thermostat {
   private readonly id: string
 
   private currentHeating = false
+  private targetHeating = false
+  private stopped = false
+  private readonly refreshTimer: ReturnType<typeof setInterval>
   private currentTemperature = 20
   private targetTemperature = 20
   private currentHumidity: number | undefined
@@ -123,6 +125,20 @@ export class Thermostat {
 
     log.info('Thermostat finished initializing!')
     this.refreshStateIfNeeded(true)
+    this.refreshTimer = setInterval(() => {
+      this.refreshStateIfNeeded(true)
+    }, 60000)
+    this.refreshTimer.unref()
+  }
+
+  dispose(): void {
+    this.stopped = true
+    clearInterval(this.refreshTimer)
+    if (this.targetTemperatureUpdateTimer !== undefined)
+      clearTimeout(this.targetTemperatureUpdateTimer)
+    this.pendingWrites.splice(0).forEach(({ reject }) => {
+      reject(this.communicationError())
+    })
   }
 
   identify(): void {
@@ -138,6 +154,7 @@ export class Thermostat {
   }
 
   private refreshStateIfNeeded(forceRefresh = false): void {
+    if (this.stopped) return
     if (
       !forceRefresh &&
       Date.now() - this.lastStateRefreshAt < STATE_REFRESH_TTL_MS
@@ -162,11 +179,13 @@ export class Thermostat {
       forceRefresh: true
     })
 
-    if (home === null) {
+    if (home === null || this.stopped) {
       return
     }
 
     this.currentHeating = home.combiState === 'on'
+    this.targetHeating =
+      home.option === 'frozen' ? false : home.targetTemperature > 5
     this.currentTemperature = home.temperature
     this.targetTemperature = home.targetTemperature
     this.currentHumidity = home.humidity
@@ -175,7 +194,7 @@ export class Thermostat {
     const currentHeatingState = this.currentHeating
       ? this.hap.Characteristic.CurrentHeatingCoolingState.HEAT
       : this.hap.Characteristic.CurrentHeatingCoolingState.OFF
-    const targetHeatingState = this.currentHeating
+    const targetHeatingState = this.targetHeating
       ? this.hap.Characteristic.TargetHeatingCoolingState.HEAT
       : this.hap.Characteristic.TargetHeatingCoolingState.OFF
 
@@ -212,19 +231,35 @@ export class Thermostat {
     )
   }
 
-  private requireFreshState(): void {
+  private async requireFreshState(): Promise<void> {
     this.refreshStateIfNeeded()
     if (
-      this.lastStateRefreshAt === 0 ||
-      Date.now() - this.lastStateRefreshAt > 120_000
-    ) {
-      throw this.communicationError()
+      this.lastStateRefreshAt > 0 &&
+      Date.now() - this.lastStateRefreshAt <= 120000
+    )
+      return
+    // A stale cache must not fail the very read that starts its refresh.
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        this.stateRefreshPromise,
+        new Promise<void>((resolve) => {
+          deadline = setTimeout(resolve, 2000)
+        })
+      ])
+    } finally {
+      if (deadline !== undefined) clearTimeout(deadline)
     }
+    if (
+      this.lastStateRefreshAt === 0 ||
+      Date.now() - this.lastStateRefreshAt > 120000
+    )
+      throw this.communicationError()
   }
 
-  handleCurrentHeatingCoolingStateGet(): number {
+  async handleCurrentHeatingCoolingStateGet(): Promise<number> {
     this.log.debug('Triggered GET CurrentHeatingCoolingState')
-    this.requireFreshState()
+    await this.requireFreshState()
 
     const { OFF, HEAT } = this.hap.Characteristic.CurrentHeatingCoolingState
 
@@ -238,13 +273,13 @@ export class Thermostat {
   /**
    * Handle requests to get the current value of the "Target Heating Cooling State" characteristic
    */
-  handleTargetHeatingCoolingStateGet(): number {
+  async handleTargetHeatingCoolingStateGet(): Promise<number> {
     this.log.debug('Triggered GET TargetHeatingCoolingState')
-    this.requireFreshState()
+    await this.requireFreshState()
 
     const { OFF, HEAT } = this.hap.Characteristic.TargetHeatingCoolingState
 
-    const currentValue = this.currentHeating ? HEAT : OFF
+    const currentValue = this.targetHeating ? HEAT : OFF
 
     this.log.debug('Target heating state is', this.currentHeating, currentValue)
 
@@ -275,9 +310,9 @@ export class Thermostat {
   /**
    * Handle requests to get the current value of the "Current Temperature" characteristic
    */
-  handleCurrentTemperatureGet(): number {
+  async handleCurrentTemperatureGet(): Promise<number> {
     this.log.debug('Triggered GET CurrentTemperature')
-    this.requireFreshState()
+    await this.requireFreshState()
 
     this.log.debug('Current value is', this.currentTemperature)
 
@@ -287,9 +322,9 @@ export class Thermostat {
   /**
    * Handle requests to get the current value of the "Target Temperature" characteristic
    */
-  handleTargetTemperatureGet(): number {
+  async handleTargetTemperatureGet(): Promise<number> {
     this.log.debug('Triggered GET TargetTemperature')
-    this.requireFreshState()
+    await this.requireFreshState()
 
     this.log.debug('Target temperature is', this.targetTemperature)
 
@@ -356,10 +391,14 @@ export class Thermostat {
   }
 
   async handleCurrentRelativeHumidityGet(): Promise<number> {
-    try {
-      return await getCurrentHumidity({ homeId: this.id })
-    } catch {
+    await this.requireFreshState()
+    if (
+      typeof this.currentHumidity !== 'number' ||
+      !Number.isFinite(this.currentHumidity) ||
+      this.currentHumidity < 0 ||
+      this.currentHumidity > 100
+    )
       throw this.communicationError()
-    }
+    return this.currentHumidity
   }
 }

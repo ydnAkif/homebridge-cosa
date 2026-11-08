@@ -71,6 +71,9 @@ export class CosaPlatform {
                 id: home.id,
                 name: home.name
             });
+            this.api.on('shutdown', () => {
+                accessory.dispose();
+            });
             const alias = this.config.accessoryNames?.[home.id] ??
                 this.config.accessoryNames?.[home.name];
             if (typeof alias === 'string' && alias.trim().length > 0) {

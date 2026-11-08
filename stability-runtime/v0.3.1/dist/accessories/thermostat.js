@@ -1,4 +1,4 @@
-import { getHome, getCurrentHumidity, setTargetHeatingState, setTargetTemperature } from '../api/home.js';
+import { getHome, setTargetHeatingState, setTargetTemperature } from '../api/home.js';
 const TARGET_TEMPERATURE_DEBOUNCE_MS = 800;
 const STATE_REFRESH_TTL_MS = 30_000;
 export class Thermostat {
@@ -10,6 +10,9 @@ export class Thermostat {
     hap;
     id;
     currentHeating = false;
+    targetHeating = false;
+    stopped = false;
+    refreshTimer;
     currentTemperature = 20;
     targetTemperature = 20;
     currentHumidity;
@@ -80,6 +83,19 @@ export class Thermostat {
             .setCharacteristic(hap.Characteristic.Model, 'v4');
         log.info('Thermostat finished initializing!');
         this.refreshStateIfNeeded(true);
+        this.refreshTimer = setInterval(() => {
+            this.refreshStateIfNeeded(true);
+        }, 60000);
+        this.refreshTimer.unref();
+    }
+    dispose() {
+        this.stopped = true;
+        clearInterval(this.refreshTimer);
+        if (this.targetTemperatureUpdateTimer !== undefined)
+            clearTimeout(this.targetTemperatureUpdateTimer);
+        this.pendingWrites.splice(0).forEach(({ reject }) => {
+            reject(this.communicationError());
+        });
     }
     identify() {
         this.log('Identified.');
@@ -92,6 +108,8 @@ export class Thermostat {
         ];
     }
     refreshStateIfNeeded(forceRefresh = false) {
+        if (this.stopped)
+            return;
         if (!forceRefresh &&
             Date.now() - this.lastStateRefreshAt < STATE_REFRESH_TTL_MS) {
             return;
@@ -110,10 +128,12 @@ export class Thermostat {
             homeId: this.id,
             forceRefresh: true
         });
-        if (home === null) {
+        if (home === null || this.stopped) {
             return;
         }
         this.currentHeating = home.combiState === 'on';
+        this.targetHeating =
+            home.option === 'frozen' ? false : home.targetTemperature > 5;
         this.currentTemperature = home.temperature;
         this.targetTemperature = home.targetTemperature;
         this.currentHumidity = home.humidity;
@@ -121,7 +141,7 @@ export class Thermostat {
         const currentHeatingState = this.currentHeating
             ? this.hap.Characteristic.CurrentHeatingCoolingState.HEAT
             : this.hap.Characteristic.CurrentHeatingCoolingState.OFF;
-        const targetHeatingState = this.currentHeating
+        const targetHeatingState = this.targetHeating
             ? this.hap.Characteristic.TargetHeatingCoolingState.HEAT
             : this.hap.Characteristic.TargetHeatingCoolingState.OFF;
         this.thermostatService.updateCharacteristic(this.hap.Characteristic.CurrentHeatingCoolingState, currentHeatingState);
@@ -140,16 +160,32 @@ export class Thermostat {
     communicationError() {
         return new this.hap.HapStatusError(-70402 /* this.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE */);
     }
-    requireFreshState() {
+    async requireFreshState() {
         this.refreshStateIfNeeded();
-        if (this.lastStateRefreshAt === 0 ||
-            Date.now() - this.lastStateRefreshAt > 120_000) {
-            throw this.communicationError();
+        if (this.lastStateRefreshAt > 0 &&
+            Date.now() - this.lastStateRefreshAt <= 120000)
+            return;
+        // A stale cache must not fail the very read that starts its refresh.
+        let deadline;
+        try {
+            await Promise.race([
+                this.stateRefreshPromise,
+                new Promise((resolve) => {
+                    deadline = setTimeout(resolve, 2000);
+                })
+            ]);
         }
+        finally {
+            if (deadline !== undefined)
+                clearTimeout(deadline);
+        }
+        if (this.lastStateRefreshAt === 0 ||
+            Date.now() - this.lastStateRefreshAt > 120000)
+            throw this.communicationError();
     }
-    handleCurrentHeatingCoolingStateGet() {
+    async handleCurrentHeatingCoolingStateGet() {
         this.log.debug('Triggered GET CurrentHeatingCoolingState');
-        this.requireFreshState();
+        await this.requireFreshState();
         const { OFF, HEAT } = this.hap.Characteristic.CurrentHeatingCoolingState;
         const currentValue = this.currentHeating ? HEAT : OFF;
         this.log.debug('Heating state is', this.currentHeating, currentValue);
@@ -158,11 +194,11 @@ export class Thermostat {
     /**
      * Handle requests to get the current value of the "Target Heating Cooling State" characteristic
      */
-    handleTargetHeatingCoolingStateGet() {
+    async handleTargetHeatingCoolingStateGet() {
         this.log.debug('Triggered GET TargetHeatingCoolingState');
-        this.requireFreshState();
+        await this.requireFreshState();
         const { OFF, HEAT } = this.hap.Characteristic.TargetHeatingCoolingState;
-        const currentValue = this.currentHeating ? HEAT : OFF;
+        const currentValue = this.targetHeating ? HEAT : OFF;
         this.log.debug('Target heating state is', this.currentHeating, currentValue);
         return currentValue;
     }
@@ -188,18 +224,18 @@ export class Thermostat {
     /**
      * Handle requests to get the current value of the "Current Temperature" characteristic
      */
-    handleCurrentTemperatureGet() {
+    async handleCurrentTemperatureGet() {
         this.log.debug('Triggered GET CurrentTemperature');
-        this.requireFreshState();
+        await this.requireFreshState();
         this.log.debug('Current value is', this.currentTemperature);
         return this.currentTemperature;
     }
     /**
      * Handle requests to get the current value of the "Target Temperature" characteristic
      */
-    handleTargetTemperatureGet() {
+    async handleTargetTemperatureGet() {
         this.log.debug('Triggered GET TargetTemperature');
-        this.requireFreshState();
+        await this.requireFreshState();
         this.log.debug('Target temperature is', this.targetTemperature);
         return this.targetTemperature;
     }
@@ -257,12 +293,13 @@ export class Thermostat {
         this.log.debug('Triggered SET TemperatureDisplayUnits:', value);
     }
     async handleCurrentRelativeHumidityGet() {
-        try {
-            return await getCurrentHumidity({ homeId: this.id });
-        }
-        catch {
+        await this.requireFreshState();
+        if (typeof this.currentHumidity !== 'number' ||
+            !Number.isFinite(this.currentHumidity) ||
+            this.currentHumidity < 0 ||
+            this.currentHumidity > 100)
             throw this.communicationError();
-        }
+        return this.currentHumidity;
     }
 }
 //# sourceMappingURL=thermostat.js.map

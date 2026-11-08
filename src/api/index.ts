@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { AxiosError } from 'axios'
 
 const API_BASE_URL = 'https://kiwi.cosa.com.tr/api'
 const API_TIMEOUT_MS = 15_000
@@ -50,6 +50,36 @@ export const api = axios.create({
     'Content-Type': 'application/json',
     Accept: 'application/json'
   }
+})
+
+// Cosa reports an expired token as HTTP 200 with code 104.
+// Normalize it before the shared auth retry interceptor, without logging its body.
+api.interceptors.response.use((response) => {
+  const data: unknown = response.data
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    'code' in data &&
+    String(data.code) === '104' &&
+    response.config.url !== '/users/login'
+  ) {
+    throw new AxiosError(
+      'Cosa session expired',
+      'ERR_BAD_RESPONSE',
+      response.config,
+      response.request,
+      { ...response, status: 401 }
+    )
+  }
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    'ok' in data &&
+    (data.ok === false || data.ok === 0)
+  ) {
+    throw new Error('Cosa API rejected the request')
+  }
+  return response
 })
 
 let refreshSession: (() => Promise<boolean>) | undefined

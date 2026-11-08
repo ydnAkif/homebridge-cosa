@@ -104,6 +104,9 @@ export class CosaPlatform implements StaticPlatformPlugin {
         id: home.id,
         name: home.name
       })
+      this.api.on('shutdown', () => {
+        accessory.dispose()
+      })
       const alias =
         this.config.accessoryNames?.[home.id] ??
         this.config.accessoryNames?.[home.name]

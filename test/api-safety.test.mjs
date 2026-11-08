@@ -154,7 +154,7 @@ test('an expired session is renewed once for parallel reads, then failed authent
     api.defaults.adapter = adapter
   }
 })
-test('HomeKit cached reads reject missing or expired state and serve a recent valid reading', () => {
+test('HomeKit cached reads reject missing or expired state and serve a recent valid reading', async () => {
   class Offline extends Error {
     constructor(code) {
       super()
@@ -170,15 +170,15 @@ test('HomeKit cached reads reject missing or expired state and serve a recent va
     lastStateRefreshAt: 0,
     refreshStateIfNeeded() {}
   })
-  assert.throws(
-    () => a.handleCurrentTemperatureGet(),
+  await assert.rejects(
+    a.handleCurrentTemperatureGet(),
     (e) => e.hapStatus === -70402
   )
   a.lastStateRefreshAt = Date.now() - 121000
   a.currentTemperature = 22
-  assert.throws(() => a.handleCurrentTemperatureGet())
+  await assert.rejects(a.handleCurrentTemperatureGet())
   a.lastStateRefreshAt = Date.now()
-  assert.equal(a.handleCurrentTemperatureGet(), 22)
+  assert.equal(await a.handleCurrentTemperatureGet(), 22)
 })
 test('HomeKit mode write awaits cloud acknowledgment and returns communication failure on rejection', async () => {
   const post = api.post
