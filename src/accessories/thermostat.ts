@@ -25,7 +25,7 @@ export class Thermostat {
 
   private readonly id: string
 
-  private currentHeating = false
+  private currentHeating: boolean | undefined
   private targetHeating = false
   private stopped = false
   private readonly refreshTimer: ReturnType<typeof setInterval>
@@ -183,7 +183,8 @@ export class Thermostat {
       return
     }
 
-    this.currentHeating = home.combiState === 'on'
+    this.currentHeating =
+      home.combiState === undefined ? undefined : home.combiState === 'on'
     this.targetHeating =
       home.option === 'frozen' ? false : home.targetTemperature > 5
     this.currentTemperature = home.temperature
@@ -191,17 +192,19 @@ export class Thermostat {
     this.currentHumidity = home.humidity
     this.lastStateRefreshAt = Date.now()
 
-    const currentHeatingState = this.currentHeating
-      ? this.hap.Characteristic.CurrentHeatingCoolingState.HEAT
-      : this.hap.Characteristic.CurrentHeatingCoolingState.OFF
+    const currentHeatingState =
+      this.currentHeating === undefined
+        ? this.communicationError()
+        : this.currentHeating
+        ? this.hap.Characteristic.CurrentHeatingCoolingState.HEAT
+        : this.hap.Characteristic.CurrentHeatingCoolingState.OFF
     const targetHeatingState = this.targetHeating
       ? this.hap.Characteristic.TargetHeatingCoolingState.HEAT
       : this.hap.Characteristic.TargetHeatingCoolingState.OFF
 
-    this.thermostatService.updateCharacteristic(
-      this.hap.Characteristic.CurrentHeatingCoolingState,
-      currentHeatingState
-    )
+    this.thermostatService
+      .getCharacteristic(this.hap.Characteristic.CurrentHeatingCoolingState)
+      .updateValue(currentHeatingState)
     this.thermostatService.updateCharacteristic(
       this.hap.Characteristic.TargetHeatingCoolingState,
       targetHeatingState
@@ -261,6 +264,7 @@ export class Thermostat {
     this.log.debug('Triggered GET CurrentHeatingCoolingState')
     await this.requireFreshState()
 
+    if (this.currentHeating === undefined) throw this.communicationError()
     const { OFF, HEAT } = this.hap.Characteristic.CurrentHeatingCoolingState
 
     const currentValue = this.currentHeating ? HEAT : OFF

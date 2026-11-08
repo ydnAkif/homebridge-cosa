@@ -9,7 +9,7 @@ export class Thermostat {
     informationService;
     hap;
     id;
-    currentHeating = false;
+    currentHeating;
     targetHeating = false;
     stopped = false;
     refreshTimer;
@@ -131,20 +131,25 @@ export class Thermostat {
         if (home === null || this.stopped) {
             return;
         }
-        this.currentHeating = home.combiState === 'on';
+        this.currentHeating =
+            home.combiState === undefined ? undefined : home.combiState === 'on';
         this.targetHeating =
             home.option === 'frozen' ? false : home.targetTemperature > 5;
         this.currentTemperature = home.temperature;
         this.targetTemperature = home.targetTemperature;
         this.currentHumidity = home.humidity;
         this.lastStateRefreshAt = Date.now();
-        const currentHeatingState = this.currentHeating
-            ? this.hap.Characteristic.CurrentHeatingCoolingState.HEAT
-            : this.hap.Characteristic.CurrentHeatingCoolingState.OFF;
+        const currentHeatingState = this.currentHeating === undefined
+            ? this.communicationError()
+            : this.currentHeating
+                ? this.hap.Characteristic.CurrentHeatingCoolingState.HEAT
+                : this.hap.Characteristic.CurrentHeatingCoolingState.OFF;
         const targetHeatingState = this.targetHeating
             ? this.hap.Characteristic.TargetHeatingCoolingState.HEAT
             : this.hap.Characteristic.TargetHeatingCoolingState.OFF;
-        this.thermostatService.updateCharacteristic(this.hap.Characteristic.CurrentHeatingCoolingState, currentHeatingState);
+        this.thermostatService
+            .getCharacteristic(this.hap.Characteristic.CurrentHeatingCoolingState)
+            .updateValue(currentHeatingState);
         this.thermostatService.updateCharacteristic(this.hap.Characteristic.TargetHeatingCoolingState, targetHeatingState);
         this.thermostatService.updateCharacteristic(this.hap.Characteristic.CurrentTemperature, this.currentTemperature);
         this.thermostatService.updateCharacteristic(this.hap.Characteristic.TargetTemperature, this.targetTemperature);
@@ -186,6 +191,8 @@ export class Thermostat {
     async handleCurrentHeatingCoolingStateGet() {
         this.log.debug('Triggered GET CurrentHeatingCoolingState');
         await this.requireFreshState();
+        if (this.currentHeating === undefined)
+            throw this.communicationError();
         const { OFF, HEAT } = this.hap.Characteristic.CurrentHeatingCoolingState;
         const currentValue = this.currentHeating ? HEAT : OFF;
         this.log.debug('Heating state is', this.currentHeating, currentValue);

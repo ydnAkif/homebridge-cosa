@@ -4,7 +4,8 @@ import { requireHumidity } from '../humidity.js'
 import { z } from 'zod'
 
 const HomeSchema = z.object({
-  combiState: z.enum(['on', 'off']),
+  // Unknown boiler state must not invalidate independent measurements.
+  combiState: z.enum(['on', 'off']).optional().catch(undefined),
   option: z.string().optional(),
   temperature: z.number().finite(),
   targetTemperature: z.number().finite(),
@@ -167,6 +168,29 @@ export async function getHome({
         const parsedResponse = HomeResponseSchema.safeParse(response.data)
 
         if (parsedResponse.success) {
+          if (
+            parsedResponse.data.endpoint.combiState === undefined &&
+            (!homeCache.has(homeId) ||
+              homeCache.get(homeId)?.value.combiState !== undefined)
+          ) {
+            const responseData: unknown = response.data
+            const endpoint =
+              typeof responseData === 'object' &&
+              responseData !== null &&
+              'endpoint' in responseData
+                ? responseData.endpoint
+                : undefined
+            const state =
+              typeof endpoint === 'object' &&
+              endpoint !== null &&
+              'combiState' in endpoint
+                ? endpoint.combiState
+                : undefined
+            const kind = state === null ? 'null' : typeof state
+            logApiWarn(
+              `Boiler state unavailable (type ${kind}); valid temperature and humidity remain available.`
+            )
+          }
           homeCache.set(homeId, {
             value: parsedResponse.data.endpoint,
             fetchedAt: Date.now()
@@ -244,7 +268,8 @@ export async function getCurrentHeatingState({
     homeId
   })
 
-  if (house === null) throw new Error('Cosa state unavailable')
+  if (house === null || house.combiState === undefined)
+    throw new Error('Cosa state unavailable')
   return house.combiState === 'on'
 }
 

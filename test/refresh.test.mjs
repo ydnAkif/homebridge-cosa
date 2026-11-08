@@ -187,3 +187,47 @@ test('an unavailable cloud refresh has a two-second HomeKit deadline and never i
     api.post = post
   }
 })
+
+test('boiler state loss invalidates only the heating characteristic and recovers without hiding current measurements', async (t) => {
+  t.mock.timers.enable({
+    apis: ['setTimeout', 'setInterval', 'Date'],
+    now: 9000000
+  })
+  const original = api.defaults.adapter
+  let a
+  let reading = { ...home, combiState: 'on' }
+  try {
+    api.defaults.adapter = async (config) => ({
+      data: { ok: 1, endpoint: reading },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config
+    })
+    a = fixture('partial-state-transition')
+    await flush()
+    assert.equal(await a.handleCurrentHeatingCoolingStateGet(), 1)
+    reading = { ...home, combiState: null, temperature: 21.2, humidity: 61 }
+    t.mock.timers.tick(60000)
+    await flush()
+    await assert.rejects(
+      a.handleCurrentHeatingCoolingStateGet(),
+      (error) => error.hapStatus === -70402
+    )
+    assert.equal(await a.handleCurrentTemperatureGet(), 21.2)
+    assert.equal(await a.handleCurrentRelativeHumidityGet(), 61)
+    assert.equal(await a.handleTargetHeatingCoolingStateGet(), 1)
+    const currentHeating = a
+      .getServices()[1]
+      .getCharacteristic(a.hap.Characteristic.CurrentHeatingCoolingState)
+    assert.equal(currentHeating.value.hapStatus, -70402)
+    reading = { ...home, combiState: 'off', temperature: 21.3 }
+    t.mock.timers.tick(60000)
+    await flush()
+    assert.equal(await a.handleCurrentHeatingCoolingStateGet(), 0)
+    assert.equal(currentHeating.value, 0)
+  } finally {
+    a?.dispose()
+    api.defaults.adapter = original
+  }
+})

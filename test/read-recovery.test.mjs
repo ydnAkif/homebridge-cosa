@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { api, setApiLogger } from '../dist/api/index.js'
-import { getHome } from '../dist/api/home.js'
+import { getHome, getCurrentHeatingState } from '../dist/api/home.js'
 const home = {
   combiState: 'off',
   temperature: 21.8,
@@ -115,6 +115,46 @@ test('code 100 backend parse failure reports a fixed category without exposing d
         return true
       }
     )
+  } finally {
+    api.defaults.adapter = original
+  }
+})
+
+test('missing and malformed boiler state preserves valid measurements and never fabricates OFF', async () => {
+  const original = api.defaults.adapter
+  const logs = []
+  setApiLogger((_level, message) => logs.push(message))
+  try {
+    for (const [index, value] of [
+      undefined,
+      null,
+      'private-fixture-state',
+      1,
+      false,
+      {}
+    ].entries()) {
+      let calls = 0
+      api.defaults.adapter = async (config) => {
+        calls++
+        return {
+          data: { ok: 1, endpoint: { ...home, combiState: value } },
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          config
+        }
+      }
+      const homeId = 'partial-state-' + index
+      const result = await getHome({ homeId })
+      assert.equal(result.temperature, home.temperature)
+      assert.equal(result.humidity, home.humidity)
+      assert.equal(result.targetTemperature, home.targetTemperature)
+      assert.equal(result.combiState, undefined)
+      await assert.rejects(getCurrentHeatingState({ homeId }), /unavailable/)
+      assert.equal(calls, 1)
+    }
+    assert.ok(logs.some((message) => message.includes('type null')))
+    assert.ok(!logs.join(' ').includes('private-fixture-state'))
   } finally {
     api.defaults.adapter = original
   }
