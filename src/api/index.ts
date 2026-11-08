@@ -53,14 +53,18 @@ export const api = axios.create({
 })
 
 export class CosaApiError extends Error {
-  constructor(code: unknown) {
+  constructor(code: unknown, backendDatabaseFailure = false) {
     const safeCode =
       typeof code === 'number' && Number.isFinite(code)
         ? String(code)
         : typeof code === 'string' && /^-?\d{1,8}$/.test(code)
         ? code
         : 'unknown'
-    super(`Cosa API rejected the request (code ${safeCode})`)
+    super(
+      `Cosa API rejected the request (code ${safeCode})${
+        backendDatabaseFailure ? ': backend database query failed' : ''
+      }`
+    )
     this.name = 'CosaApiError'
   }
 }
@@ -90,7 +94,25 @@ api.interceptors.response.use((response) => {
     'ok' in data &&
     (data.ok === false || data.ok === 0)
   ) {
-    throw new CosaApiError('code' in data ? data.code : undefined)
+    const details = 'error' in data ? data.error : undefined
+    const raw =
+      typeof details === 'object' && details !== null && 'raw' in details
+        ? details.raw
+        : undefined
+    const backendDatabaseFailure =
+      'code' in data &&
+      String(data.code) === '100' &&
+      typeof raw === 'object' &&
+      raw !== null &&
+      'name' in raw &&
+      raw.name === 'MongoError' &&
+      'code' in raw &&
+      raw.code === 9
+    // Only emit a fixed category. Never copy server messages or database queries.
+    throw new CosaApiError(
+      'code' in data ? data.code : undefined,
+      backendDatabaseFailure
+    )
   }
   return response
 })

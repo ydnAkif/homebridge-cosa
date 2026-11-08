@@ -1,3 +1,4 @@
+import { Agent } from 'node:https'
 import { api, CosaApiError, logApiError, logApiWarn } from './index.js'
 import { requireHumidity } from '../humidity.js'
 import { z } from 'zod'
@@ -38,6 +39,8 @@ class EndpointResponseError extends Error {
 const HOME_CACHE_TTL_MS = 30_000
 const READ_RETRY_COUNT = 2
 const READ_RETRY_DELAY_MS = 1_000
+// A new TLS connection avoids reusing the failing backend connection.
+const readRetryAgent = new Agent({ keepAlive: false })
 const WRITE_RETRY_COUNT = 2
 const WRITE_RETRY_DELAY_MS = 800
 
@@ -155,9 +158,11 @@ export async function getHome({
   const request = (async (): Promise<HomeType | null> => {
     for (let attempt = 1; attempt <= READ_RETRY_COUNT; attempt++) {
       try {
-        const response = await api.post('/endpoints/getEndpoint', {
-          endpoint: homeId
-        })
+        const response = await api.post(
+          '/endpoints/getEndpoint',
+          { endpoint: homeId },
+          attempt > 1 ? { httpsAgent: readRetryAgent } : undefined
+        )
 
         const parsedResponse = HomeResponseSchema.safeParse(response.data)
 
@@ -195,7 +200,7 @@ export async function getHome({
         }
 
         logApiError(
-          `getEndpoint request failed for homeId=${homeId} on attempt ${attempt}/${READ_RETRY_COUNT}`,
+          `getEndpoint request failed on attempt ${attempt}/${READ_RETRY_COUNT}`,
           error
         )
         return null

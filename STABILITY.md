@@ -13,3 +13,7 @@ The first read after inactivity now waits for the shared refresh for up to two s
 ## 2026-11-08 intermittent endpoint responses
 
 The three-hour running log contained intermittent rejected endpoint reads; 15 independent diagnostic samples were valid, so their exact historical backend error code remains unconfirmed. Application rejection errors now retain only a safe numeric code. Endpoint reads retry a rejected or schema-invalid response once before reporting permanent failure; write application failures are not replayed. Schema diagnostics list field paths without payload values. Recovered read attempts no longer produce a terminal error; persistent failure remains an unavailable reading. Four regression tests cover read recovery, permanent failure, schema failure and safe diagnostics.
+
+## 2026-11-08 confirmed backend database failure
+
+A separate live read captured code 100 with E_UNKNOWN and a MongoDB FailedToParse error: the Cosa backend sent an unsupported admin field in a database query. An immediate retry over a fresh TLS connection succeeded. This establishes a Cosa backend error, not a Pi resource or credential failure. The existing single read retry now uses a non-keepalive agent, so it cannot reuse the failed connection. This is a client mitigation, not a repair of Cosa's database server; persistent failures still reject and writes are unchanged. A fixed diagnostic category identifies this exact backend error without exposing the raw query, server message, account IDs or credentials. Terminal read errors no longer log the home ID.

@@ -16,11 +16,13 @@ for (const scenario of ['application', 'schema', 'persistent']) {
     t.mock.timers.enable({ apis: ['setTimeout'] })
     let calls = 0
     const original = api.defaults.adapter,
-      logs = []
+      logs = [],
+      configs = []
     setApiLogger((level, message) => logs.push({ level, message }))
     try {
       api.defaults.adapter = async (config) => {
         calls++
+        configs.push(config)
         const fail = calls === 1 || scenario === 'persistent'
         const data = fail
           ? scenario === 'schema'
@@ -36,6 +38,9 @@ for (const scenario of ['application', 'schema', 'persistent']) {
       await flush()
       const value = await result
       assert.equal(calls, 2)
+      assert.notEqual(configs[1].httpsAgent, configs[0].httpsAgent)
+      assert.equal(configs[1].httpsAgent.keepAlive, false)
+      assert.deepEqual(JSON.parse(configs[1].data), JSON.parse(configs[0].data))
       if (scenario === 'persistent') {
         assert.equal(value, null)
         assert.ok(
@@ -71,6 +76,44 @@ test('application rejection diagnostic contains only a numeric code, never arbit
       (e) =>
         !e.message.includes('private-fixture-password') &&
         e.message.includes('unknown')
+    )
+  } finally {
+    api.defaults.adapter = original
+  }
+})
+
+test('code 100 backend parse failure reports a fixed category without exposing database details', async () => {
+  const original = api.defaults.adapter
+  try {
+    api.defaults.adapter = async (config) => ({
+      data: {
+        ok: 0,
+        code: 100,
+        error: {
+          error: 'E_UNKNOWN',
+          raw: {
+            name: 'MongoError',
+            code: 9,
+            message: 'secret-account-fixture database query admin'
+          }
+        }
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config
+    })
+    await assert.rejects(
+      api.post('/endpoints/getEndpoint', { endpoint: 'fixture' }),
+      (error) => {
+        assert.equal(
+          error.message,
+          'Cosa API rejected the request (code 100): backend database query failed'
+        )
+        assert.ok(!error.message.includes('secret-account-fixture'))
+        assert.ok(!error.message.includes('admin'))
+        return true
+      }
     )
   } finally {
     api.defaults.adapter = original
